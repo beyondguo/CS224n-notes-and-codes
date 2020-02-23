@@ -6,15 +6,21 @@ from torch.utils.data import TensorDataset,DataLoader
 
 # 简易的训练测试数据：
 sents = [s.lower().split() for s in ["we 'll always have Paris",
-                                           "I live in Germany",
-                                           "He comes from Denmark",
-                                           "The capital of Denmark is Copenhagen",
-                                           "She comes from Paris"]]
+                                     "I live in Germany",
+                                     "He comes from Denmark",
+                                     "The capital of Denmark is Copenhagen",
+                                     "She comes from Paris",
+                                     "I live in Beijing",
+                                     "He is from Xiaogan",
+                                     "Beijing is the capital of China"]]
 labels = [[0, 0, 0, 0, 1],
-                [0, 0, 0, 1],
-                [0, 0, 0, 1],
-                [0, 0, 0, 1, 0, 1],
-                [0, 0, 0, 1]]
+		  [0, 0, 0, 1],
+		  [0, 0, 0, 1],
+		  [0, 0, 0, 1, 0, 1],
+		  [0, 0, 0, 1],
+		  [0, 0, 0, 1],
+		  [0, 0, 0, 1],
+		  [1, 0, 0, 0, 0, 1]]
 
 
 
@@ -92,6 +98,7 @@ def data_tranform(sents,labels,window_step):
 
     labels_ohs = [torch.tensor(label2onehot(label)) for label in labels]
     padded_ys = nn.utils.rnn.pad_sequence(labels_ohs,batch_first=True)
+    # 最后需要把数据集转化成TensorDataset的形式，才能被DataLoader调用：
     return TensorDataset(padded_inputs,padded_ys)
 
 # padded_inputs,padded_ys = data_tranform(sents,labels,2)
@@ -102,14 +109,14 @@ def data_tranform(sents,labels,window_step):
 # ============模型搭建部分：==================
 
 class SoftmaxWordWindowClassifier(nn.Module):
-    def __init__(self,params,vocab_size,pad_idx=0):
+    def __init__(self,cofig,vocab_size,pad_idx=0):
         super(SoftmaxWordWindowClassifier,self).__init__()
         # 定义变量：
-        self.window_size = 2*params['window_step']+1
-        self.embed_dim = params["embed_dim"]
-        self.hidden_dim = params["hidden_dim"]
+        self.window_size = 2*cofig['window_step']+1
+        self.embed_dim = cofig["embed_dim"]
+        self.hidden_dim = cofig["hidden_dim"]
         self.num_classes = 2
-        self.freeze_embeddings = params["freeze_embeddings"]
+        self.freeze_embeddings = cofig["freeze_embeddings"]
 
         # 定义网络层：
         # Embedding layer:
@@ -155,11 +162,8 @@ class SoftmaxWordWindowClassifier(nn.Module):
 
         # 接着把一个window中的各个词向量给拼起来，实际上就是reshape一下。即(B,N,S,D)->(B,N,S*D)
         embedded_windows_concat = embedded_windows.view(batch_size,window_num,-1)
-        # print('embedded_windows_concat:',embedded_windows_concat.size())
         hidden = self.hidden_layer(embedded_windows_concat) # (B,N,S*D)->(B,N,H)
-        # print('hidden:',hidden.size())
         output = self.output_layer(hidden)   # (B,N,H)->(B,N,2)
-        # print('output:',output.size())
         output = self.log_softmax(output)    # (B,N,2)->(B,N,2)
 
         # 返回一个batch的输出
@@ -176,21 +180,24 @@ def loss_function(outputs,labels):
     """
     B, N, num_classes = outputs.size()
     loss_matrix = outputs*labels
-    loss = -loss_matrix.sum().float()/(B*N) # ??
+    loss = -loss_matrix.sum()/(B*N) # 求各batch各窗口loss的平均
     return loss
 
 
 # 训练函数（一个epoch，每个epoch会有多个batch）：
 def train_epoch(train_data,model,loss_function,optimizer):
     epoch_loss = 0
-    for inputs , ys in train_data: # padded_inputs,padded_ys
-        optimizer.zero_grad() # 每个batch都要把梯度清零
+    for inputs , ys in train_data:  # padded_inputs,padded_ys
+    	# 每个batch都要把梯度清零
+        optimizer.zero_grad() 
         outputs = model.forward(inputs)
-        loss = loss_function(outputs, ys) #计算一个batch的loss
-        # pass gradients back, startiing on loss value
+        #计算一个batch的loss
+        loss = loss_function(outputs, ys) 
+        # 将loss反向传播求梯度
         loss.backward()
-        # update parameters
+        # 使用optimizer根据梯度对所有参数进行更新
         optimizer.step()
+        # 我们要返回是一个epoch的loss之和
         epoch_loss += loss.item()
     return epoch_loss
      
@@ -198,7 +205,8 @@ def train_epoch(train_data,model,loss_function,optimizer):
 
 # ============训练测试部分：==================
 
-params = {"batch_size": 4,
+# 设置相关的模型配置（config）和超参数：
+cofig = {"batch_size": 4,
           "window_step": 2,
           "embed_dim": 25,
           "hidden_dim": 25,
@@ -207,18 +215,30 @@ params = {"batch_size": 4,
          }
 
 learning_rate = .0002
-num_epochs = 10000
-model = SoftmaxWordWindowClassifier(params, len(corpus))
+num_epochs = 20000
+model = SoftmaxWordWindowClassifier(cofig, len(corpus))
 optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
 
-dataset = data_tranform(sents,labels,params['window_step'])
-print(type(dataset))
-print('------------')
-train_loader = DataLoader(dataset,batch_size=params['batch_size'],shuffle=True)
+# 加载训练数据：
+
+train_dataset = data_tranform(sents[:-3],labels[:-3],cofig['window_step'])
+train_data_loader = DataLoader(train_dataset,batch_size=cofig['batch_size'],shuffle=True)
 
 losses = []
 for epoch in range(num_epochs):
-    epoch_loss = train_epoch(train_loader,model,loss_function,optimizer)
-    if epoch % 100 == 0:
+    epoch_loss = train_epoch(train_data_loader,model,loss_function,optimizer)
+    if epoch % 1000 == 0:
         losses.append(epoch_loss)
         print('epoch%d loss:'%epoch,epoch_loss)
+
+# 测试：
+test_dataset = data_tranform(sents[-3:],labels[-3:],cofig['window_step'])
+test_data_loader = DataLoader(test_dataset,batch_size=1,shuffle=False)
+for test_inputs,test_ys in test_data_loader:
+	output = model.forward(test_inputs)
+	print([id2word[int(id)] for id in test_inputs[0]])
+	print("predicted labels:")
+	print(torch.argmin(output,dim=2))
+	print("true labels:")
+	print(torch.argmin(test_ys,dim=2))
+	print('===========================')
