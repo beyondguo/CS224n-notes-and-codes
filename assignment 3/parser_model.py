@@ -70,6 +70,14 @@ class ParserModel(nn.Module):
         ###     nn.Parameter: https://pytorch.org/docs/stable/nn.html#parameters
         ###     Initialization: https://pytorch.org/docs/stable/nn.init.html
         ###     Dropout: https://pytorch.org/docs/stable/nn.html#dropout-layers
+        self.embed_to_hidden_weight = nn.Parameter(nn.init.xavier_uniform_(torch.empty(self.n_features*self.embed_size,self.hidden_size)))
+        self.embed_to_hidden_bias = nn.Parameter(nn.init.xavier_uniform_(torch.empty(1,self.hidden_size)))
+
+        self.dropout = nn.Dropout(self.dropout_prob)
+
+        self.hidden_to_logits_weight = nn.Parameter(nn.init.xavier_uniform_(torch.empty(self.hidden_size,self.n_classes)))
+        self.hidden_to_logits_bias = nn.Parameter(nn.init.xavier_uniform_(torch.empty(1,self.n_classes)))
+
 
 
 
@@ -104,8 +112,14 @@ class ParserModel(nn.Module):
         ###     Gather: https://pytorch.org/docs/stable/torch.html#torch.gather
         ###     View: https://pytorch.org/docs/stable/tensors.html#torch.Tensor.view
 
+        # 笨方法：
+        # x = torch.empty(w.shape[0],self.n_features*self.embed_size)
+        # for i in range(w.shape[0]): # n_rows of w and x
+        #     row = torch.index_select(self.embeddings,0,w[i]).view(-1,) # shape:(m,d)-->(m*d,)
+        #     x[i] = row
 
-
+        # 聪明方法：
+        x = self.embeddings[w].view(w.shape[0],-1)
         ### END YOUR CODE
         return x
 
@@ -140,6 +154,12 @@ class ParserModel(nn.Module):
         ### Please see the following docs for support:
         ###     Matrix product: https://pytorch.org/docs/stable/torch.html#torch.matmul
         ###     ReLU: https://pytorch.org/docs/stable/nn.html?highlight=relu#torch.nn.functional.relu
+
+        x = self.embedding_lookup(w)
+        # 这里不能使用torch.dot，torch中的dot只能接受两个向量相乘，这个跟numpy中不一样
+        h = F.relu(x.matmul(self.embed_to_hidden_weight)+self.embed_to_hidden_bias)
+        h = self.dropout(h)
+        logits = h.matmul(self.hidden_to_logits_weight)+self.hidden_to_logits_bias
 
 
         ### END YOUR CODE
